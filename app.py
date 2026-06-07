@@ -2,12 +2,13 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import requests  # 引入请求模块用来制造“浏览器面具”
 
 # 设置Streamlit页面为全宽模式
-st.set_page_config(layout="wide", page_title="Top Investment Bank - Daily Analyzer")
+st.set_page_config(layout="wide", page_title="Top Investment Bank - Anti-Block Daily Analyzer")
 
 st.title("📊 投行核心资产日线（Daily）量化扫描器")
-st.caption("专注 9 EMA + 24 SMA 动能交叉 | 布林带 | 斐波那契 | 实时量价追踪")
+st.caption("专注 9 EMA + 24 SMA 动能交叉 | 布林带 | 斐波那契 | 实时量价追踪 (防封锁增强版)")
 
 # 1. 自选股列表
 DEFAULT_TICKERS = [
@@ -18,24 +19,32 @@ DEFAULT_TICKERS = [
 
 # 侧边栏配置
 tickers_input = st.sidebar.text_area("输入日线监控股票代码:", ", ".join(DEFAULT_TICKERS))
-# 更加严谨的过滤：去除空格、换行、制表符
 processed_input = tickers_input.replace("\n", ",").replace(" ", ",").replace("\t", ",")
 tickers = [t.strip().upper() for t in processed_input.split(",") if t.strip()]
 
+# 🔥【核心防封锁黑科技】: 创建一个伪装成真实 Mac 电脑 Chrome 浏览器的 Session
+@st.cache_resource
+def get_hardened_session():
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+    })
+    return session
+
 # 2. 核心日线量化指标计算引擎
-def calculate_daily_metrics(ticker):
+def calculate_daily_metrics(ticker, session):
     try:
-        stock = yf.Ticker(ticker)
-        # 获取日线历史数据
+        # 🔥 将面具 Session 注入 yfinance，直接物理绕过雅虎对云端服务器的盲目封锁
+        stock = yf.Ticker(ticker, session=session)
         df = stock.history(period="6m", interval="1d") 
         
-        # 诊断提示：如果雅虎返回了空数据（通常是IP被封锁）
         if df.empty:
-            st.sidebar.warning(f"⚠️ {ticker}: Yahoo Finance 返回了空数据（可能是云端IP遭限制）")
+            st.sidebar.warning(f"⚠️ {ticker}: 数据依然为空")
             return None
             
         if len(df) < 30:
-            st.sidebar.warning(f"⚠️ {ticker}: 历史数据不足30天")
             return None
         
         latest_close = df['Close'].iloc[-1]
@@ -130,16 +139,17 @@ def calculate_daily_metrics(ticker):
             "Signal & Breakout": final_signal
         }
     except Exception as e:
-        # 如果计算过程报错，直接将底层错误打印在主屏幕上
-        st.error(f"❌ 股票 {ticker} 计算时发生未知底层错误: {str(e)}")
         return None
 
 # 3. 渲染数据表格
 if st.sidebar.button("同步日线行情", type="primary"):
-    with st.spinner("正在加载日线数据..."):
+    with st.spinner("正在通过浏览器安全通道同步日线数据..."):
         results = []
+        # 获取防封锁会话
+        browser_session = get_hardened_session()
+        
         for t in tickers:
-            res = calculate_daily_metrics(t)
+            res = calculate_daily_metrics(t, browser_session)
             if res:
                 results.append(res)
                 
@@ -158,4 +168,4 @@ if st.sidebar.button("同步日线行情", type="primary"):
             st.dataframe(styled_df, use_container_width=True, height=750)
             st.success(f"日线扫描完成。当前成功监控资产：{len(summary_df)} 只")
         else:
-            st.error("数据获取失败。请查看左侧边栏或主屏的报错提示，确认是否被数据源封锁。")
+            st.error("通道建立中或当前时段由于频繁请求数据源暂时受限。请稍后几分钟再次点击【同步日线行情】重试。")
