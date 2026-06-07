@@ -3,13 +3,13 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 
-# 设置Streamlit页面为全宽模式（匹配老板给的模板风格）
+# 设置Streamlit页面为全宽模式
 st.set_page_config(layout="wide", page_title="Top Investment Bank - Daily Analyzer")
 
 st.title("📊 投行核心资产日线（Daily）量化扫描器")
 st.caption("专注 9 EMA + 24 SMA 动能交叉 | 布林带 | 斐波那契 | 实时量价追踪")
 
-# 1. 自选股列表（基于您的模板）
+# 1. 自选股列表
 DEFAULT_TICKERS = [
     "MCHP", "TXN", "GFS", "TSM", "AAOI", "NOK", "MU", "HIMX", 
     "ON", "STM", "NVTS", "COHR", "VPG", "ENPH", "AEHR", 
@@ -18,15 +18,24 @@ DEFAULT_TICKERS = [
 
 # 侧边栏配置
 tickers_input = st.sidebar.text_area("输入日线监控股票代码:", ", ".join(DEFAULT_TICKERS))
-tickers = [t.strip().upper() for t in tickers_input.replace("\n", ",").replace(" ", ",").split(",") if t.strip()]
+# 更加严谨的过滤：去除空格、换行、制表符
+processed_input = tickers_input.replace("\n", ",").replace(" ", ",").replace("\t", ",")
+tickers = [t.strip().upper() for t in processed_input.split(",") if t.strip()]
 
 # 2. 核心日线量化指标计算引擎
 def calculate_daily_metrics(ticker):
     try:
-        # 获取日线历史数据（6个月确保均线和斐波那契周期稳定）
         stock = yf.Ticker(ticker)
-        df = stock.history(period="6m", interval="1d") # 严格限定为 Daily
-        if df.empty or len(df) < 30:
+        # 获取日线历史数据
+        df = stock.history(period="6m", interval="1d") 
+        
+        # 诊断提示：如果雅虎返回了空数据（通常是IP被封锁）
+        if df.empty:
+            st.sidebar.warning(f"⚠️ {ticker}: Yahoo Finance 返回了空数据（可能是云端IP遭限制）")
+            return None
+            
+        if len(df) < 30:
+            st.sidebar.warning(f"⚠️ {ticker}: 历史数据不足30天")
             return None
         
         latest_close = df['Close'].iloc[-1]
@@ -39,7 +48,7 @@ def calculate_daily_metrics(ticker):
         ema_9_now = df['EMA_9'].iloc[-1]
         sma_24_now = df['SMA_24'].iloc[-1]
         
-        # B. 交叉信号判定 (追溯最近几天判定是否刚刚金叉/死叉)
+        # B. 交叉信号判定
         ema_9_prev = df['EMA_9'].iloc[-2]
         sma_24_prev = df['SMA_24'].iloc[-2]
         
@@ -65,7 +74,7 @@ def calculate_daily_metrics(ticker):
         df['BB_std'] = df['Close'].rolling(window=20).std()
         df['BB_lower'] = df['BB_mid'] - (2 * df['BB_std'])
         
-        # E. 斐波那契回撤线（近60个交易日高低点）
+        # E. 斐波那契回撤线
         recent_df = df.tail(60)
         high_p = recent_df['High'].max()
         low_p = recent_df['Low'].min()
@@ -84,10 +93,9 @@ def calculate_daily_metrics(ticker):
         else:
             breakout_status = ""
             
-        # 融合突破状态到信号栏
         final_signal = trend_signal + breakout_status
         
-        # G. 放量 / 缩量 判定（对比20日均量）
+        # G. 放量 / 缩量 判定
         df['Vol_SMA20'] = df['Volume'].rolling(window=20).mean()
         avg_vol = df['Vol_SMA20'].iloc[-1]
         if latest_vol > avg_vol * 1.5:
@@ -97,7 +105,7 @@ def calculate_daily_metrics(ticker):
         else:
             vol_status = "正常"
             
-        # H. 基于 9EMA + 24SMA 的量化评分机制
+        # H. 评分机制
         score = 50
         if trend_signal == "🎯 金叉启动": score += 25
         elif trend_signal == "📈 多头趋势": score += 15
@@ -107,7 +115,7 @@ def calculate_daily_metrics(ticker):
         if "🚀 突破阻力" in final_signal: score += 15
         if vol_status == "🔥 放量" and "多头" in trend_signal: score += 10
         
-        score = max(10, min(95, score)) # 确保分数在合理区间
+        score = max(10, min(95, score))
 
         return {
             "Ticker": ticker,
@@ -122,6 +130,8 @@ def calculate_daily_metrics(ticker):
             "Signal & Breakout": final_signal
         }
     except Exception as e:
+        # 如果计算过程报错，直接将底层错误打印在主屏幕上
+        st.error(f"❌ 股票 {ticker} 计算时发生未知底层错误: {str(e)}")
         return None
 
 # 3. 渲染数据表格
@@ -135,10 +145,8 @@ if st.sidebar.button("同步日线行情", type="primary"):
                 
         if results:
             summary_df = pd.DataFrame(results)
-            # 按 Score 降序排列，完全还原您的看板模板
             summary_df = summary_df.sort_values(by="Score", ascending=False).reset_index(drop=True)
             
-            # 视觉样式增强
             def style_rows(val):
                 if "金叉" in str(val) or "突破" in str(val):
                     return 'background-color: #e6f4ea; color: #137333; font-weight: bold;'
@@ -147,8 +155,7 @@ if st.sidebar.button("同步日线行情", type="primary"):
                 return ''
                 
             styled_df = summary_df.style.map(style_rows, subset=['Signal & Breakout'])
-            
             st.dataframe(styled_df, use_container_width=True, height=750)
-            st.success(f"日线扫描完成。当前监控资产：{len(summary_df)} 只")
+            st.success(f"日线扫描完成。当前成功监控资产：{len(summary_df)} 只")
         else:
-            st.error("数据获取失败，请检查网络或代码列表。")
+            st.error("数据获取失败。请查看左侧边栏或主屏的报错提示，确认是否被数据源封锁。")
